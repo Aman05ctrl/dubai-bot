@@ -1,3 +1,6 @@
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
 import os
 import json
 import requests
@@ -6,6 +9,23 @@ import google.generativeai as genai
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
+# --- Google Sheet Setup ---
+def save_to_sheet(sender, message):
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("google_key.json", scope)
+        client = gspread.authorize(creds)
+        sheet = client.open("Dubai Real Estate Leads").sheet1  # Sheet name must match exactly
+
+        # Time and Date
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Save Data: [Time, Name(Dummy), Phone, Message]
+        sheet.append_row([current_time, "User", sender, message])
+        print("Saved to Google Sheet!")
+    except Exception as e:
+        print(f"Sheet Error: {e}")
+# --------------------------
 
 # REPLACE WITH YOUR KEYS
 WHATSAPP_TOKEN = "EAAPf2nk4ZAecBQM3kg6FZCsPVPWFQOZBMySzYAhvbjkNHQclZA0hjbTCzV3ixoZBpK4I2a2dhMCrDTpY8lrUckp1uons8axHgtEzZA3JzcWYcp4qim6BHX5ePZCRwKLKNcddMHHc11epUQkO0kvHEwX0wPIdxZATDTnZAiNyBohlNutgqvK0ZA4ZBZAH1EfZCdpypoXtOlAZDZD" 
@@ -70,6 +90,8 @@ def webhook():
                 text_body = message["text"]["body"]
                 
                 print(f"User said: {text_body}")
+
+                save_to_sheet(sender_id, text_body)
 
                 # --- GEMINI LOGIC ---
                 # 1. Ask Gemini to reply
