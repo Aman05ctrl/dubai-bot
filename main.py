@@ -1,78 +1,78 @@
-import os
-import json
-import re  # Email validation
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
-import requests
-from flask import Flask, request
-import google.generativeai as genai
+# import os
+# import json
+# import re  # Email validation
+# import gspread
+# from oauth2client.service_account import ServiceAccountCredentials
+# from datetime import datetime
+# import requests
+# from flask import Flask, request
+# import google.generativeai as genai
 
-# --- CONFIGURATION ---
-app = Flask(__name__)
-# --- Google Sheet Setup ---
-# --- GOOGLE SHEET FUNCTION (Updated) ---
-def save_to_sheet(sender, message, user_name, email, city):
-    try:
-        # 1. Connect
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("google_key.json", scope)
-        client = gspread.authorize(creds)
+# # --- CONFIGURATION ---
+# app = Flask(__name__)
+# # --- Google Sheet Setup ---
+# # --- GOOGLE SHEET FUNCTION (Updated) ---
+# def save_to_sheet(sender, message, user_name, email, city):
+#     try:
+#         # 1. Connect
+#         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+#         creds = ServiceAccountCredentials.from_json_keyfile_name("google_key.json", scope)
+#         client = gspread.authorize(creds)
         
-        # 2. Open Sheet
-        sheet = client.open("Dubai Real Estate Leads").sheet1
+#         # 2. Open Sheet
+#         sheet = client.open("Dubai Real Estate Leads").sheet1
         
-        # 3. Time
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#         # 3. Time
+#         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # 4. Save Data: [Date, Name, Phone, Message, Email, City]
-        sheet.append_row([current_time, user_name, sender, message, email, city])
-        print(f"✅ Data Saved: {user_name} | {email} | {city}")
-    except Exception as e:
-        print(f"❌ Sheet Error: {e}")
-# ---------------------------------------
-# --------------------------
+#         # 4. Save Data: [Date, Name, Phone, Message, Email, City]
+#         sheet.append_row([current_time, user_name, sender, message, email, city])
+#         print(f"✅ Data Saved: {user_name} | {email} | {city}")
+#     except Exception as e:
+#         print(f"❌ Sheet Error: {e}")
+# # ---------------------------------------
+# # --------------------------
 
-# REPLACE WITH YOUR KEYS
-WHATSAPP_TOKEN = "EAAPf2nk4ZAecBQM3kg6FZCsPVPWFQOZBMySzYAhvbjkNHQclZA0hjbTCzV3ixoZBpK4I2a2dhMCrDTpY8lrUckp1uons8axHgtEzZA3JzcWYcp4qim6BHX5ePZCRwKLKNcddMHHc11epUQkO0kvHEwX0wPIdxZATDTnZAiNyBohlNutgqvK0ZA4ZBZAH1EfZCdpypoXtOlAZDZD" 
-PHONE_NUMBER_ID = "904076146124413" 
-GEMINI_API_KEY = "AIzaSyDlCNXnqqKTiDCDUluSpYqrgMGAGuiL2Tg" 
+# # REPLACE WITH YOUR KEYS
+# WHATSAPP_TOKEN = "EAAPf2nk4ZAecBQM3kg6FZCsPVPWFQOZBMySzYAhvbjkNHQclZA0hjbTCzV3ixoZBpK4I2a2dhMCrDTpY8lrUckp1uons8axHgtEzZA3JzcWYcp4qim6BHX5ePZCRwKLKNcddMHHc11epUQkO0kvHEwX0wPIdxZATDTnZAiNyBohlNutgqvK0ZA4ZBZAH1EfZCdpypoXtOlAZDZD" 
+# PHONE_NUMBER_ID = "904076146124413" 
+# GEMINI_API_KEY = "AIzaSyDlCNXnqqKTiDCDUluSpYqrgMGAGuiL2Tg" 
 
-# Setup Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-# model = genai.GenerativeModel('gemini-2.0-flash')
-model = genai.GenerativeModel('gemini-flash-latest')
+# # Setup Gemini
+# genai.configure(api_key=GEMINI_API_KEY)
+# # model = genai.GenerativeModel('gemini-2.0-flash')
+# model = genai.GenerativeModel('gemini-flash-latest')
 
-# Load Database
-try:
-    with open('data.json', 'r') as f:
-        PROPERTIES = json.load(f)
-except Exception as e:
-    print(f"Warning: data.json not found or invalid. Error: {e}")
-    PROPERTIES = []
+# # Load Database
+# try:
+#     with open('data.json', 'r') as f:
+#         PROPERTIES = json.load(f)
+# except Exception as e:
+#     print(f"Warning: data.json not found or invalid. Error: {e}")
+#     PROPERTIES = []
 
-# --- HELPER FUNCTIONS ---
-def send_whatsapp_text(to_number, text):
-    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    data = {
-        "messaging_product": "whatsapp",
-        "to": to_number,
-        "type": "text",
-        "text": {"body": text}
-    }
-    requests.post(url, headers=headers, json=data)
+# # --- HELPER FUNCTIONS ---
+# def send_whatsapp_text(to_number, text):
+#     url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+#     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+#     data = {
+#         "messaging_product": "whatsapp",
+#         "to": to_number,
+#         "type": "text",
+#         "text": {"body": text}
+#     }
+#     requests.post(url, headers=headers, json=data)
 
-def send_whatsapp_image(to_number, image_url, caption):
-    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    data = {
-        "messaging_product": "whatsapp",
-        "to": to_number,
-        "type": "image",
-        "image": {"link": image_url, "caption": caption}
-    }
-    requests.post(url, headers=headers, json=data)
+# def send_whatsapp_image(to_number, image_url, caption):
+#     url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+#     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+#     data = {
+#         "messaging_product": "whatsapp",
+#         "to": to_number,
+#         "type": "image",
+#         "image": {"link": image_url, "caption": caption}
+#     }
+#     requests.post(url, headers=headers, json=data)
 
 # # --- SERVER ---
 # @app.route('/webhook', methods=['GET'])
@@ -95,8 +95,7 @@ def send_whatsapp_image(to_number, image_url, caption):
 #                 sender_id = message["from"]
 #                 text_body = message["text"]["body"]
                 
-#                 # print(f"User said: {text_body}")
-#                 # --- 1. NAME EXTRACTION (WhatsApp Profile Name) ---
+#                 # --- 1. NAME EXTRACTION ---
 #                 user_name = "Unknown User"
 #                 if "contacts" in value:
 #                     try:
@@ -104,69 +103,272 @@ def send_whatsapp_image(to_number, image_url, caption):
 #                     except:
 #                         pass
 
-#                 # --- 2. EMAIL EXTRACTION (Regex se dhundega) ---
+#                 # --- 2. EMAIL EXTRACTION ---
 #                 email_match = re.search(r'[\w\.-]+@[\w\.-]+', text_body)
 #                 user_email = email_match.group(0) if email_match else "Not Provided"
 
-#                 # --- 3. CITY EXTRACTION (Simple Keyword Search) ---
-#                 # Aap aur shehar add kar sakte hain
-#                 cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "sharjah", "india", "delhi", "mumbai"]
+#                 # --- 3. CITY EXTRACTION (Updated for Demo) ---
+#                 # Added UK and specific Dubai areas as per your request
+#                 demo_cities = [
+#                     "dubai", "marina", "downtown", "meydan", "abudhabi", "yas", "saadiyat", 
+#                     "sharjah", "india", "delhi", "mumbai", 
+#                     "uk", "london", "manchester", "birmingham"
+#                 ]
+                
 #                 user_city = "Not Mentioned"
-#                 for city in cities:
+#                 # Check against the list
+#                 for city in demo_cities:
 #                     if city in text_body.lower():
-#                         user_city = city.title() # First letter capital kar dega
+#                         user_city = city.title()
 #                         break
+                
+#                 # If not in list, but user provided a location, we mark it as "Custom"
+#                 if user_city == "Not Mentioned" and len(text_body) < 20:
+#                      # Heuristic: If message is short, it might be a city name not in our list
+#                      pass 
 
 #                 print(f"User Info: {user_name}, Email: {user_email}, City: {user_city}")
 
-#                 # --- 4. SAVE TO SHEET (Ab saari details jayengi) ---
+#                 # --- 4. SAVE TO SHEET ---
 #                 save_to_sheet(sender_id, text_body, user_name, user_email, user_city)
 
-#                 # save_to_sheet(sender_id, text_body)
-
-#                 # --- GEMINI LOGIC ---
-#                 # 1. Ask Gemini to reply
-#                 # --- STRICTER GEMINI LOGIC ---
-#                 prompt = f"""
-#                 You are a Logic Bot, not a chat assistant.
-#                 User Input: "{text_body}"
                 
-#                 RULES:
-#                 1. If the user mentions 'Marina', 'Downtown', or 'Meydan', reply with ONLY this code: "SHOW_PHOTO: [Location]". Do not add any other text.
-#                 2. If no location is found, ask politely if they want Investment or End-use.
+#                 # 1. THE BRAIN (Sarah's Personality & Rules)
+#                 prompt = f"""
+#                 You are Sarah, a Senior Property Consultant. You are chatting with a client on WhatsApp.
+#                 TONE: Professional but warm, casual, and direct. Use emojis naturally (👋, 🏡, ✨).
+#                 GOAL: Guide them from City -> Budget -> Closing.
+                
+#                 Current User Input: "{text_body}"
+#                 User's Extracted City: "{user_city}"
+
+#                 YOUR DATA:
+#                 - Locations: Dubai (Marina, Downtown), Abu Dhabi (Yas, Saadiyat), UK (London, Manchester).
+#                 - Luxury Tier: "The Royal Penthouse Collection" (15M AED / £3M).
+#                 - Standard Tier: "Sunrise Family Apartments" (2.5M AED / £500k).
+
+#                 INSTRUCTIONS:
+#                 1. GREETING: If user says Hi/Hello, reply: 
+#                    "Hi there! 👋 I'm Sarah. It's a pleasure to assist you. Which city or area are you looking into today? (e.g., Dubai Marina, London)"
+
+#                 2. LOCATION RECEIVED: If user mentions a valid location (like "{user_city}"), reply:
+#                    "Excellent choice! 🏙️ '{user_city}' is a fantastic market. To tailor the best options, do you prefer Luxury, Standard, or Affordable?"
+
+#                 3. BUDGET RECEIVED (THE MAGIC STEP): 
+#                    If the user mentions 'Luxury', 'Standard', or 'Budget':
+#                    - First, describe the property nicely based on the 'YOUR DATA' section.
+#                    - THEN, strictly append this code at the end: "SHOW_PHOTO: {user_city}"
+#                    (This will automatically send them the image while you talk).
+
+#                 4. DIRECT IMAGE REQUEST: 
+#                    If the user asks "Show me photos" or "Images", reply:
+#                    "Here is a glimpse of what we have available. SHOW_PHOTO: {user_city}"
+
+#                 5. OUT OF SCOPE: If they ask for a city not in the list (e.g. Tokyo), redirect them politely to Dubai or UK.
 #                 """
                 
+#                 # 2. GENERATE RESPONSE
 #                 response = model.generate_content(prompt)
-#                 reply_text = response.text.strip()
-#                 print(f"AI Reply: {reply_text}")
-
-#                 # 2. Check for "Secret Code" to send photos
-#                 if "SHOW_PHOTO" in reply_text:
-#                     # Extract location
+#                 full_reply = response.text.strip()
+                
+#                 # 3. CLEANUP (Fix Bold Formatting for WhatsApp)
+#                 # Convert **Bold** to *Bold*
+#                 full_reply = full_reply.replace("**", "*")
+                
+#                 # 4. SMART SEPARATION (Talk + Show Photo)
+#                 # Sarah might send text AND a photo command. We need to split them.
+                
+#                 if "SHOW_PHOTO" in full_reply:
+#                     # Logic: Split the text from the command
 #                     try:
-#                         location_key = reply_text.split(":")[1].strip().lower() # e.g., "marina"
-#                     except:
-#                         location_key = "unknown"
-                    
-#                     found = False
-#                     for prop in PROPERTIES:
-#                         if location_key in prop['location'].lower():
-#                             found = True
-#                             send_whatsapp_text(sender_id, f"Here are the details for {prop['name']}:")
-#                             caption = f"Price: {prop['price_aed']} AED\nROI: {prop['roi']}\n{prop['description']}"
-#                             send_whatsapp_image(sender_id, prop['image_url'], caption)
-                    
-#                     if not found:
-#                         send_whatsapp_text(sender_id, "I have properties there, but I need to check the latest availability.")
+#                         # 1. Extract the text part (Sarah's speech)
+#                         text_part = full_reply.split("SHOW_PHOTO")[0].strip()
+#                         if text_part:
+#                             send_whatsapp_text(sender_id, text_part)
+                        
+#                         # 2. Extract the location for the photo
+#                         command_part = full_reply.split("SHOW_PHOTO")[1] # Gets ": Dubai Marina"
+#                         location_part = command_part.replace(":", "").strip().lower()
+#                         # Clean up any accidental symbols
+#                         location_key = location_part.replace("*", "").replace(".", "")
+                        
+#                         # 3. Find and Send Image
+#                         found = False
+#                         for prop in PROPERTIES:
+#                             if location_key in prop['location'].lower():
+#                                 found = True
+#                                 # Send the image
+#                                 caption = f"📸 *View:* {prop['name']}\n*Price:* {prop['price_aed']} AED\n*ROI:* {prop['roi']}"
+#                                 send_whatsapp_image(sender_id, prop['image_url'], caption)
+#                                 break # Stop after finding the first match
+                        
+#                         if not found:
+#                             # Fallback if Sarah tried to show a photo we don't have
+#                             pass # Do nothing, just the text sent above is enough
+                            
+#                     except Exception as e:
+#                         print(f"Error parsing hybrid response: {e}")
+#                         send_whatsapp_text(sender_id, full_reply.replace("SHOW_PHOTO", "")) # Just send text if error
                 
 #                 else:
-#                     # Normal Reply
-#                     send_whatsapp_text(sender_id, reply_text)
+#                     # No photo command, just normal chat
+#                     print(f"AI Reply: {full_reply}")
+#                     send_whatsapp_text(sender_id, full_reply)
 
 #     except Exception as e:
 #         print(f"Error: {e}")
 
 #     return "OK", 200
+
+# if __name__ == '__main__':
+#     print("🚀 Bot is running on Port 5000...")
+#     app.run(port=5000)
+
+
+import os
+import json
+import re
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
+import pytz  # DUBAI TIME ke liye zaroori
+import requests
+from flask import Flask, request
+import google.generativeai as genai
+
+# --- CONFIGURATION ---
+app = Flask(__name__)
+
+# REPLACE WITH YOUR KEYS
+WHATSAPP_TOKEN = "EAAPf2nk4ZAecBQM3kg6FZCsPVPWFQOZBMySzYAhvbjkNHQclZA0hjbTCzV3ixoZBpK4I2a2dhMCrDTpY8lrUckp1uons8axHgtEzZA3JzcWYcp4qim6BHX5ePZCRwKLKNcddMHHc11epUQkO0kvHEwX0wPIdxZATDTnZAiNyBohlNutgqvK0ZA4ZBZAH1EfZCdpypoXtOlAZDZD" 
+PHONE_NUMBER_ID = "904076146124413" 
+GEMINI_API_KEY = "AIzaSyDlCNXnqqKTiDCDUluSpYqrgMGAGuiL2Tg" 
+
+# Setup Gemini
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-flash-latest')
+
+# Load Database
+try:
+    with open('data.json', 'r') as f:
+        PROPERTIES = json.load(f)
+except Exception as e:
+    print(f"Warning: data.json not found. Error: {e}")
+    PROPERTIES = []
+
+# --- HELPER: TIMEZONE & PHONE FORMAT ---
+def get_dubai_time():
+    # Server time ko Dubai Time mein convert karna
+    try:
+        dubai_tz = pytz.timezone('Asia/Dubai')
+        return datetime.now(dubai_tz).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # Fallback agar pytz fail ho (rare case)
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def format_phone_number(phone_id):
+    # Country code alag karna
+    if phone_id.startswith("91"):
+        return "+91", phone_id[2:]
+    elif phone_id.startswith("971"):
+        return "+971", phone_id[3:]
+    elif phone_id.startswith("1"):
+        return "+1", phone_id[1:]
+    elif phone_id.startswith("44"):
+        return "+44", phone_id[2:]
+    else:
+        return "", phone_id # Default
+
+# --- GOOGLE SHEET FUNCTION (STRICTLY SAFE UPDATE) ---
+def update_sheet_smartly(sender_id, user_name, email, city, interest):
+    try:
+        # 1. Connect
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("google_key.json", scope)
+        client = gspread.authorize(creds)
+        sheet = client.open("Dubai Real Estate Leads").sheet1
+        
+        # 2. Prepare Data
+        current_time = get_dubai_time()
+        country_code, clean_phone = format_phone_number(sender_id)
+        
+        # 3. Check if User Exists (Search by Raw Phone ID in Column H)
+        # Note: Column H index is 8
+        cell = None
+        try:
+            cell = sheet.find(sender_id) 
+        except gspread.exceptions.CellNotFound:
+            cell = None
+        except Exception as e:
+            print(f"Search Error: {e}")
+            cell = None
+
+        if cell:
+            # --- EXISTING USER (SAFE UPDATE ONLY) ---
+            # Rule: Date (Col 1), Code (Col 3), Phone (Col 4) ko touch nahi karna.
+            # Rule: Sirf wahi cell update karo jo user ne naya diya hai.
+            
+            row_num = cell.row
+            print(f"🔄 User found at Row {row_num}. Checking for new info...")
+            
+            # Name Update: Sirf tab jab wo "Unknown" na ho
+            if user_name != "Unknown User":
+                sheet.update_cell(row_num, 2, user_name)
+                
+            # Interest Update (Column E = 5)
+            if interest != "Not Specified":
+                sheet.update_cell(row_num, 5, interest) 
+                print(f"   -> Updated Interest to {interest}")
+                
+            # Email Update (Column F = 6)
+            if email != "Not Provided":
+                sheet.update_cell(row_num, 6, email)    
+                print(f"   -> Updated Email to {email}")
+                
+            # City Update (Column G = 7)
+            if city != "Not Mentioned":
+                sheet.update_cell(row_num, 7, city)     
+                print(f"   -> Updated City to {city}")
+
+        else:
+            # --- NEW USER (CREATE ROW) ---
+            print(f"🆕 Creating new user: {user_name}")
+            
+            # Column Structure:
+            # A: Date | B: Name | C: Code | D: Phone | E: Interest | F: Email | G: City | H: RAW_ID
+            
+            sheet.append_row([
+                current_time,   # A: Join Date
+                user_name,      # B: Name
+                country_code,   # C: Country Code (+91)
+                clean_phone,    # D: Clean Phone
+                interest,       # E: Interest
+                email,          # F: Email
+                city,           # G: City
+                sender_id       # H: Raw ID (Hidden/System)
+            ])
+            
+    except Exception as e:
+        print(f"❌ Sheet Error: {e}")
+
+# --- WHATSAPP SENDERS ---
+def send_whatsapp_text(to_number, text):
+    try:
+        url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+        data = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"body": text}}
+        requests.post(url, headers=headers, json=data)
+    except Exception as e:
+        print(f"WhatsApp Send Error: {e}")
+
+def send_whatsapp_image(to_number, image_url, caption):
+    try:
+        url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+        data = {"messaging_product": "whatsapp", "to": to_number, "type": "image", "image": {"link": image_url, "caption": caption}}
+        requests.post(url, headers=headers, json=data)
+    except Exception as e:
+        print(f"WhatsApp Image Error: {e}")
 
 # --- SERVER ---
 @app.route('/webhook', methods=['GET'])
@@ -189,7 +391,7 @@ def webhook():
                 sender_id = message["from"]
                 text_body = message["text"]["body"]
                 
-                # --- 1. NAME EXTRACTION ---
+                # --- 1. DATA EXTRACTION ---
                 user_name = "Unknown User"
                 if "contacts" in value:
                     try:
@@ -197,101 +399,119 @@ def webhook():
                     except:
                         pass
 
-                # --- 2. EMAIL EXTRACTION ---
+                # Email Extraction
                 email_match = re.search(r'[\w\.-]+@[\w\.-]+', text_body)
                 user_email = email_match.group(0) if email_match else "Not Provided"
 
-                # --- 3. CITY EXTRACTION (Updated for Demo) ---
-                # Added UK and specific Dubai areas as per your request
-                demo_cities = [
-                    "dubai", "marina", "downtown", "meydan", "abudhabi", "yas", "saadiyat", 
-                    "sharjah", "india", "delhi", "mumbai", 
-                    "uk", "london", "manchester", "birmingham"
-                ]
-                
+                # City Extraction
+                demo_cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "yas", "uk", "london", "manchester"]
                 user_city = "Not Mentioned"
-                # Check against the list
                 for city in demo_cities:
                     if city in text_body.lower():
                         user_city = city.title()
                         break
                 
-                # If not in list, but user provided a location, we mark it as "Custom"
-                if user_city == "Not Mentioned" and len(text_body) < 20:
-                     # Heuristic: If message is short, it might be a city name not in our list
-                     pass 
+                # Interest Extraction
+                user_interest = "Not Specified"
+                if "luxury" in text_body.lower(): user_interest = "Luxury"
+                elif "standard" in text_body.lower(): user_interest = "Standard"
+                elif "budget" in text_body.lower() or "affordable" in text_body.lower(): user_interest = "Affordable"
 
-                print(f"User Info: {user_name}, Email: {user_email}, City: {user_city}")
+                print(f"Extracted: {user_name} | {user_email} | {user_city} | {user_interest}")
 
-                # --- 4. SAVE TO SHEET ---
-                save_to_sheet(sender_id, text_body, user_name, user_email, user_city)
+                # --- 2. UPDATE SHEET (SMARTLY) ---
+                # Naya logic yahan call hoga with fixed columns
+                update_sheet_smartly(sender_id, user_name, user_email, user_city, user_interest)
 
-                # --- 5. GEMINI LOGIC (THE BRAIN) ---
-                # We inject the "Polite Demo Persona" here.
-                
+                # --- 3. SARAH PERSONA LOGIC ---
                 prompt = f"""
-                You are a sophisticated, polite Real Estate AI Agent for a Client Demo.
+                You are Sarah, a Senior Property Consultant. You are chatting with a client on WhatsApp.
+                TONE: Professional but warm, casual, and direct. Use emojis naturally (👋, 🏡, ✨).
+                GOAL: Guide them from City -> Budget -> Closing.
+                
                 Current User Input: "{text_body}"
                 User's Extracted City: "{user_city}"
 
-                YOUR KNOWLEDGE BASE (DEMO DATA):
-                - Locations: Dubai (Marina, Downtown, Business Bay), Abu Dhabi (Yas, Saadiyat), UK (London, Manchester).
-                - Budget Tiers: 
-                  1. Luxury: "The Royal Penthouse Collection" (15M AED / £3M).
-                  2. Standard: "Sunrise Family Apartments" (2.5M AED / £500k).
-                  3. Budget: "Smart Studios" (650k AED / £150k).
+                YOUR DATA:
+                - Locations: Dubai (Marina, Downtown), Abu Dhabi (Yas, Saadiyat), UK (London, Manchester).
+                - Luxury Tier: "The Royal Penthouse Collection" (15M AED / £3M).
+                - Standard Tier: "Sunrise Family Apartments" (2.5M AED / £500k).
 
                 INSTRUCTIONS:
-                1. If the user greets (Hi/Hello), reply warmly: "Hello! It is a pleasure to assist you. Which specific city or area would you like to explore today? (e.g., Dubai Marina, London)"
-                
-                2. If the user mentions a city inside our 'Locations' list:
-                   Reply: "Excellent choice! '{user_city}' is a fantastic market. To tailor the results, do you prefer Luxury, Standard, or Affordable options?"
-                
-                3. If the user mentions a city NOT in our list (e.g., Tokyo, New York):
-                   Reply: "That is a wonderful location. However, for this specific demonstration, our data is optimized for UAE and UK prime markets. Would you like to try a search in Dubai or London instead?"
+                1. GREETING: If user says Hi/Hello, reply: 
+                   "Hi there! 👋 I'm Sarah. It's a pleasure to assist you. Which city or area are you looking into today? (e.g., Dubai Marina, London)"
 
-                4. If the user mentions 'Luxury', 'Standard', or 'Budget':
-                   Reply with the details from the 'Budget Tiers' section above politely. Ask if they want to schedule a viewing.
+                2. LOCATION RECEIVED: If user mentions a valid location (like "{user_city}"), reply:
+                   "Excellent choice! 🏙️ '{user_city}' is a fantastic market. To tailor the best options, do you prefer Luxury, Standard, or Affordable?"
 
-                5. IMAGE TRIGGER RULE: 
-                   If the user explicitly asks to SEE photos or asks "Show me [Location]", 
-                   ONLY output this exact code: "SHOW_PHOTO: [Location]"
-                   (Do not write any other text if you use this code).
+                3. BUDGET RECEIVED (THE MAGIC STEP): 
+                   If the user mentions 'Luxury', 'Standard', or 'Budget':
+                   - First, describe the property nicely based on the 'YOUR DATA' section.
+                   - THEN, strictly append this code at the end: "SHOW_PHOTO: {user_city}"
+                   (This will automatically send them the image while you talk).
+
+                4. DIRECT IMAGE REQUEST: 
+                   If the user asks "Show me photos" or "Images", reply:
+                   "Here is a glimpse of what we have available. SHOW_PHOTO: {user_city}"
+
+                5. OUT OF SCOPE: If they ask for a city not in the list (e.g. Tokyo), redirect them politely to Dubai or UK.
+
+                6. EMAIL COLLECTION:
+                   If the conversation is progressing and they show interest, gently ask:
+                   "To share the full brochure and floor plans, may I have your email address? 📧"
                 """
                 
-                response = model.generate_content(prompt)
-                reply_text = response.text.strip()
-                print(f"AI Reply: {reply_text}")
+                # Generate AI Response
+                try:
+                    response = model.generate_content(prompt)
+                    full_reply = response.text.strip()
+                    full_reply = full_reply.replace("**", "*") # Fix Bold
+                except Exception as e:
+                    print(f"Gemini Error: {e}")
+                    full_reply = "I'm having a little trouble connecting to my database. Could you please say that again?"
 
-                # --- 6. REPLY HANDLING ---
-                # Check for "Secret Code" to send photos
-                if "SHOW_PHOTO" in reply_text:
+                # --- 4. HANDLE RESPONSE (Photo vs Text) ---
+                if "SHOW_PHOTO" in full_reply:
                     try:
-                        location_key = reply_text.split(":")[1].strip().lower()
-                    except:
-                        location_key = "unknown"
-                    
-                    found = False
-                    # Search in your JSON database
-                    for prop in PROPERTIES:
-                        if location_key in prop['location'].lower():
-                            found = True
-                            send_whatsapp_text(sender_id, f"Here are the details for {prop['name']}:")
-                            caption = f"Price: {prop['price_aed']} AED\nROI: {prop['roi']}\n{prop['description']}"
-                            send_whatsapp_image(sender_id, prop['image_url'], caption)
-                    
-                    if not found:
-                        send_whatsapp_text(sender_id, f"I am searching for the best photos in {location_key}...")
-                
+                        # Logic to split text and command safely
+                        parts = full_reply.split("SHOW_PHOTO")
+                        text_part = parts[0].strip()
+                        
+                        if len(parts) > 1:
+                            command_part = parts[1]
+                        else:
+                            command_part = ": unknown" # Fallback
+
+                        if text_part:
+                            send_whatsapp_text(sender_id, text_part)
+                        
+                        location_part = command_part.replace(":", "").strip().lower()
+                        location_key = location_part.replace("*", "").replace(".", "")
+                        
+                        found = False
+                        for prop in PROPERTIES:
+                            if location_key in prop['location'].lower():
+                                found = True
+                                caption = f"📸 *View:* {prop['name']}\n*Price:* {prop['price_aed']} AED\n*ROI:* {prop['roi']}"
+                                send_whatsapp_image(sender_id, prop['image_url'], caption)
+                                break
+                        
+                        if not found:
+                             pass # Image nahi mili toh sirf text kaafi hai
+                            
+                    except Exception as e:
+                        print(f"Error parsing hybrid response: {e}")
+                        # Fallback: Agar parsing fail ho toh poora text bhej do (bina command ke)
+                        send_whatsapp_text(sender_id, full_reply.replace("SHOW_PHOTO", ""))
                 else:
-                    # Normal Polite Text Reply
-                    send_whatsapp_text(sender_id, reply_text)
+                    send_whatsapp_text(sender_id, full_reply)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Webhook Error: {e}")
 
     return "OK", 200
 
 if __name__ == '__main__':
+    # Render uses Gunicorn, but this is fine for local testing
     print("🚀 Bot is running on Port 5000...")
     app.run(port=5000)
