@@ -526,6 +526,7 @@ import pytz
 import requests
 from flask import Flask, request
 import google.generativeai as genai
+import time
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
@@ -540,7 +541,6 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-flash-latest')
 
 # --- LOAD DATABASE (SECURE WAY) ---
-# Ye ensure karega ki Render par file sahi se mile
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, 'data.json')
 KEY_FILE = os.path.join(BASE_DIR, 'google_key.json')
@@ -562,10 +562,6 @@ def get_dubai_time():
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def format_phone_number(phone_id):
-    """
-    Splits Country Code (+91) and Number strictly.
-    Input: 918470911526 -> Output: +91, 8470911526
-    """
     phone_id = str(phone_id)
     if phone_id.startswith("91") and len(phone_id) > 10:
         return "+91", phone_id[2:]
@@ -578,45 +574,27 @@ def format_phone_number(phone_id):
     else:
         return "", phone_id 
 
-# --- DUAL SHEET MANAGER (PROFILES + LOGS) ---
+# --- DUAL SHEET MANAGER ---
 def handle_dual_sheets(sender_id, user_name, message_content, email, city, interest, reply_type):
     try:
-        # 1. Connect
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
         client = gspread.authorize(creds)
-        
-        # Open Spreadsheet
         spreadsheet = client.open("Dubai Real Estate Leads")
         
         current_time = get_dubai_time()
         country_code, clean_phone = format_phone_number(sender_id)
 
-        # ----------------------------------------
-        # TASK 1: UPDATE "Logs" (Conversation History)
-        # ----------------------------------------
+        # 1. Logs
         try:
             sheet_logs = spreadsheet.worksheet("Logs")
-            # Headers: Timestamp | Name | Country Code | Phone | Message | Reply Type
-            sheet_logs.append_row([
-                current_time, 
-                user_name, 
-                country_code, 
-                clean_phone, 
-                message_content, 
-                reply_type
-            ])
-            print(f"📝 Logged to History: {message_content}")
+            sheet_logs.append_row([current_time, user_name, country_code, clean_phone, message_content, reply_type])
         except Exception as e:
-            print(f"❌ Error logging history (Check 'Logs' tab name): {e}")
+            print(f"Logs Error: {e}")
 
-        # ----------------------------------------
-        # TASK 2: UPDATE "Profiles" (One Row Per User)
-        # ----------------------------------------
+        # 2. Profiles
         try:
             sheet_profiles = spreadsheet.worksheet("Profiles")
-            
-            # Search by Raw ID (Column H -> Index 8)
             cell = None
             try:
                 cell = sheet_profiles.find(sender_id)
@@ -624,37 +602,18 @@ def handle_dual_sheets(sender_id, user_name, message_content, email, city, inter
                 cell = None
             
             if cell:
-                # --- UPDATE EXISTING USER ---
                 row_num = cell.row
-                # Sirf naya data update karein, overwrite na karein agar khali ho
-                if user_name != "Unknown User": 
-                    sheet_profiles.update_cell(row_num, 2, user_name)
-                if interest != "Not Specified": 
-                    sheet_profiles.update_cell(row_num, 5, interest)
-                if email != "Not Provided": 
-                    sheet_profiles.update_cell(row_num, 6, email)
-                if city != "Not Mentioned": 
-                    sheet_profiles.update_cell(row_num, 7, city)
-                print(f"🔄 Profile Updated for Row {row_num}")
+                if user_name != "Unknown User": sheet_profiles.update_cell(row_num, 2, user_name)
+                if interest != "Not Specified": sheet_profiles.update_cell(row_num, 5, interest)
+                if email != "Not Provided": sheet_profiles.update_cell(row_num, 6, email)
+                if city != "Not Mentioned": sheet_profiles.update_cell(row_num, 7, city)
             else:
-                # --- CREATE NEW PROFILE ---
-                print(f"🆕 Creating New Profile for {user_name}")
-                # Headers: Date | Name | Code | Phone | Interest | Email | City | RawID
-                sheet_profiles.append_row([
-                    current_time, 
-                    user_name, 
-                    country_code, 
-                    clean_phone, 
-                    interest, 
-                    email, 
-                    city, 
-                    sender_id
-                ])
+                sheet_profiles.append_row([current_time, user_name, country_code, clean_phone, interest, email, city, sender_id])
         except Exception as e:
-            print(f"❌ Error updating profile (Check 'Profiles' tab name): {e}")
+            print(f"Profiles Error: {e}")
             
     except Exception as e:
-        print(f"❌ Gspread Connection Error: {e}")
+        print(f"Sheet Connection Error: {e}")
 
 # --- WHATSAPP SENDERS ---
 def send_whatsapp_text(to_number, text):
@@ -696,19 +655,16 @@ def webhook():
                 sender_id = message["from"]
                 text_body = message["text"]["body"]
                 
-                # --- DATA EXTRACTION ---
+                # Extract Data
                 user_name = "Unknown User"
                 if "contacts" in value:
-                    try:
-                        user_name = value["contacts"][0]["profile"]["name"]
-                    except:
-                        pass
+                    try: user_name = value["contacts"][0]["profile"]["name"]
+                    except: pass
 
                 email_match = re.search(r'[\w\.-]+@[\w\.-]+', text_body)
                 user_email = email_match.group(0) if email_match else "Not Provided"
 
-                # Expanded Cities List
-                demo_cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "yas", "uk", "london", "manchester"]
+                demo_cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "yas"]
                 user_city = "Not Mentioned"
                 for city in demo_cities:
                     if city in text_body.lower():
@@ -720,83 +676,75 @@ def webhook():
                 elif "standard" in text_body.lower(): user_interest = "Standard"
                 elif "budget" in text_body.lower() or "affordable" in text_body.lower(): user_interest = "Affordable"
 
-                print(f"📩 Msg from {user_name}: {text_body}")
+                print(f"📩 Input: {text_body} | City: {user_city}")
 
                 # --- SARAH LOGIC ---
                 prompt = f"""
-                You are Sarah, a Senior Property Consultant. 
-                TONE: Professional but warm, casual, and direct. Use emojis (👋, 🏡).
-                GOAL: Guide them from City -> Budget -> Closing.
+                You are Sarah, a Real Estate Consultant.
+                Your Data:
+                - Locations: Dubai Marina, Downtown Dubai, Meydan.
+                - Inventory: Apartments & Villas.
                 
-                Current User Input: "{text_body}"
-                User's Extracted City (from this message): "{user_city}"
-
-                YOUR DATA:
-                - Locations: Dubai (Marina, Downtown), Abu Dhabi (Yas), UK (London).
-                - Luxury Tier: "The Royal Penthouse Collection" (15M AED).
-                - Standard Tier: "Sunrise Family Apartments" (2.5M AED).
-
-                INSTRUCTIONS:
-                1. GREETING: If user says Hi/Hello: "Hi there! 👋 I'm Sarah. Which city or area are you looking into today?"
+                Instructions:
+                1. If user says 'Hi', ask about City.
+                2. If user mentions City, ask about Budget/Tier.
+                3. If user says 'Show photos' AND you know the city (e.g. {user_city}), reply EXACTLY:
+                   "Here are the best options in {user_city}. SHOW_PHOTO: {user_city}"
+                4. If user asks for photos but City is unknown, ask: "Which area?"
+                5. Keep replies short (<50 words).
                 
-                2. LOCATION: If location mentioned (like "{user_city}"): 
-                   "Excellent choice! 🏙️ '{user_city}' is fantastic. Do you prefer Luxury, Standard, or Affordable?"
-
-                3. BUDGET (MAGIC STEP): If budget/tier mentioned AND you know the City:
-                   - Describe property.
-                   - THEN append: "SHOW_PHOTO: {user_city}"
-
-                4. IMAGE REQUEST (CRITICAL): 
-                   - If user asks for photos AND "{user_city}" is VALID:
-                     Reply: "Here is a glimpse. SHOW_PHOTO: {user_city}"
-                   - If user asks for photos BUT City is Unknown:
-                     Reply: "I'd love to show you photos! 📸 Could you remind me which area you are interested in? (e.g. Dubai Marina, Downtown)"
-
-                5. EMAIL: If interested, ask for email politely.
+                User said: "{text_body}"
+                Context City: "{user_city}"
                 """
                 
-                reply_type = "Text Reply" 
+                reply_type = "Text Reply"
                 try:
+                    # Safety settings to prevent blocking
                     response = model.generate_content(prompt)
                     full_reply = response.text.strip().replace("**", "*")
-                except:
-                    full_reply = "I'm checking the database, please wait a moment."
+                except Exception as e:
+                    print(f"Gemini API Error: {e}")
+                    full_reply = "I'm checking the latest inventory. Could you remind me which area you prefer?"
 
                 # --- HANDLE RESPONSE ---
                 if "SHOW_PHOTO" in full_reply:
                     reply_type = "Image Sent"
                     try:
-                        # Extract Command
                         parts = full_reply.split("SHOW_PHOTO")
                         text_part = parts[0].strip()
-                        command_part = parts[1] if len(parts) > 1 else ": unknown"
+                        command_part = parts[1].strip().lower() # e.g., "dubai marina"
 
                         if text_part: send_whatsapp_text(sender_id, text_part)
                         
-                        # Clean Location Key
-                        location_key = command_part.replace(":", "").replace("*", "").replace(".", "").strip().lower()
-                        print(f"🔍 Searching Image for: {location_key}")
+                        # --- NEW MATCHING LOGIC (MULTIPLE IMAGES) ---
+                        # Clean the command key
+                        search_key = command_part.replace(":", "").replace(".", "").strip()
+                        print(f"🔍 Searching for images matching: '{search_key}'")
 
-                        found = False
-                        # Check in Loaded Properties
+                        found_count = 0
+                        # Loop through ALL properties
                         for prop in PROPERTIES:
-                            if location_key in prop['location'].lower():
-                                found = True
-                                caption = f"📸 *View:* {prop['name']}\n*Price:* {prop['price_aed']} AED\n*ROI:* {prop['roi']}"
+                            # INVERSE CHECK: Does "Marina" exist inside "Dubai Marina"? YES.
+                            if prop['location'].lower() in search_key:
+                                caption = f"📸 *{prop['name']}*\n📍 {prop['location']}\n💰 {prop['price_aed']} AED"
                                 send_whatsapp_image(sender_id, prop['image_url'], caption)
-                                break
+                                found_count += 1
+                                time.sleep(1) # Thoda gap taaki WhatsApp block na kare
+                                
+                                # Limit to 4 images max
+                                if found_count >= 4:
+                                    break
                         
-                        if not found:
-                             print("❌ Image not found in data.json")
-                             send_whatsapp_text(sender_id, "I have the details, but I'm just fetching the latest photos for that area. One moment please!")
-                             
+                        if found_count == 0:
+                            send_whatsapp_text(sender_id, "I have properties there, but I'm updating the photos. Sending you the brochure in a bit!")
+
                     except Exception as e:
-                        print(f"Hybrid Error: {e}")
-                        send_whatsapp_text(sender_id, full_reply.replace("SHOW_PHOTO", ""))
+                        print(f"Image Logic Error: {e}")
+                        send_whatsapp_text(sender_id, "Here are the details.")
                 else:
                     send_whatsapp_text(sender_id, full_reply)
 
-                # --- UPDATE SHEETS ---
+                # --- LOGGING ---
                 handle_dual_sheets(sender_id, user_name, text_body, user_email, user_city, user_interest, reply_type)
 
     except Exception as e:
@@ -805,6 +753,5 @@ def webhook():
     return "OK", 200
 
 if __name__ == '__main__':
-    # Render uses Gunicorn, but this is fine for local testing
     print("🚀 Bot is running on Port 5000...")
     app.run(port=5000)
