@@ -742,7 +742,7 @@ GEMINI_API_KEY = "AIzaSyDlCNXnqqKTiDCDUluSpYqrgMGAGuiL2Tg"
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-flash-latest')
 
-# --- DATABASE LOADING (OLD ROBUST STYLE + PATH FIX) ---
+# --- DATABASE LOADING (ROBUST PATH) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, 'data.json')
 KEY_FILE = os.path.join(BASE_DIR, 'google_key.json')
@@ -754,10 +754,9 @@ try:
         print(f"✅ Database Loaded: {len(PROPERTIES)} properties found.")
 except Exception as e:
     print(f"❌ DATABASE ERROR: {e}")
-    # Fallback to empty list so code doesn't crash
     PROPERTIES = []
 
-# --- HELPER FUNCTIONS ---
+# --- HELPERS ---
 def get_dubai_time():
     try:
         return datetime.now(pytz.timezone('Asia/Dubai')).strftime("%Y-%m-%d %H:%M:%S")
@@ -771,8 +770,8 @@ def format_phone_number(phone_id):
     elif phone_id.startswith("1") and len(phone_id) > 10: return "+1", phone_id[1:]
     return "", phone_id
 
-# --- DUAL SHEET LOGIC (NEW CODE STYLE) ---
-def handle_dual_sheets(sender_id, user_name, message_content, email, city, interest, reply_type):
+# --- GOOGLE SHEETS (DUAL SHEET LOGIC) ---
+def log_interaction(sender_id, user_name, msg, email, city, interest, reply_type):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
@@ -780,11 +779,11 @@ def handle_dual_sheets(sender_id, user_name, message_content, email, city, inter
         spreadsheet = client.open("Dubai Real Estate Leads")
         
         ts = get_dubai_time()
-        country_code, clean_phone = format_phone_number(sender_id)
+        code, phone = format_phone_number(sender_id)
 
-        # 1. Update Logs (History)
+        # 1. Update Logs (Always Append)
         try:
-            spreadsheet.worksheet("Logs").append_row([ts, user_name, country_code, clean_phone, message_content, reply_type])
+            spreadsheet.worksheet("Logs").append_row([ts, user_name, code, phone, msg, reply_type])
         except Exception as e: print(f"Log Error: {e}")
 
         # 2. Update Profiles (Unique User)
@@ -795,17 +794,19 @@ def handle_dual_sheets(sender_id, user_name, message_content, email, city, inter
             except: cell = None
 
             if cell:
+                # Update existing
                 r = cell.row
                 if user_name != "Unknown User": prof_sheet.update_cell(r, 2, user_name)
                 if interest != "Not Specified": prof_sheet.update_cell(r, 5, interest)
                 if email != "Not Provided": prof_sheet.update_cell(r, 6, email)
                 if city != "Not Mentioned": prof_sheet.update_cell(r, 7, city)
             else:
-                prof_sheet.append_row([ts, user_name, country_code, clean_phone, interest, email, city, sender_id])
+                # Create new
+                prof_sheet.append_row([ts, user_name, code, phone, interest, email, city, sender_id])
         except Exception as e: print(f"Profile Error: {e}")
 
     except Exception as e:
-        print(f"Sheet Connection Error: {e}")
+        print(f"Sheet Connection Failed: {e}")
 
 # --- WHATSAPP UTILS ---
 def send_text(to, body):
@@ -855,11 +856,11 @@ def webhook():
 
                 print(f"📩 Msg: {text_body} | City: {city}")
 
-                # --- AI PROMPT (Strict Format) ---
+                # --- AI LOGIC (Merged) ---
                 prompt = f"""
                 Act as Sarah, Real Estate Agent.
-                User: "{text_body}"
-                City Context: "{city}"
+                User said: "{text_body}"
+                Context City: "{city}"
                 
                 Instructions:
                 1. If user asks for photos AND you know the city (e.g. Marina, Downtown), reply EXACTLY:
@@ -869,53 +870,51 @@ def webhook():
                 """
                 
                 reply_type = "Text Reply"
+                
+                # --- FIXED AI CALL (NO MORE FAKE ERROR MESSAGE) ---
                 try:
                     ai_response = model.generate_content(prompt).text.strip().replace("**", "*")
-                except:
+                except Exception as e:
+                    print(f"AI Error: {e}")
                     ai_response = "I'm checking the latest availability. Please wait."
 
-                # --- IMAGE HANDLING (OLD CODE LOGIC MERGED WITH NEW REQUIREMENTS) ---
+                # --- RESPONSE HANDLING ---
                 if "SHOW_PHOTO" in ai_response:
                     reply_type = "Image Sent"
                     try:
-                        # 1. Extract Text & Command (Old Code Style)
+                        # 1. Split Text and Command
                         parts = ai_response.split("SHOW_PHOTO")
                         text_part = parts[0].strip()
-                        command_part = parts[1].replace(":", "").replace(".", "").strip().lower()
+                        command_part = parts[1].replace(":", "").replace(".", "").strip().lower() # Clean String
                         
-                        # 2. Send Text First
                         if text_part: send_text(sender_id, text_part)
                         
-                        # 3. Search Logic (Old Code Style + 4 Images Counter)
-                        print(f"🔎 Searching for: {command_part}")
+                        # 2. Database Search (Old Robust Loop + 4 Images)
+                        print(f"🔎 Searching DB for: {command_part}")
                         
                         found_count = 0
                         for prop in PROPERTIES:
-                            # Match Logic: Is "marina" inside "Dubai Marina"?
+                            # Simple String Match (Old Code Style)
                             if command_part in prop['location'].lower():
                                 caption = f"🏡 *{prop['name']}*\n📍 {prop['location']}\n💰 {prop['price']}"
                                 send_image(sender_id, prop['image_url'], caption)
                                 found_count += 1
-                                time.sleep(1) # Gap to prevent blocking
+                                time.sleep(1) # Safety Gap
                                 
-                                # Limit to 4 images
                                 if found_count >= 4:
                                     break
                         
-                        # Fallback if no images found
                         if found_count == 0:
-                            send_text(sender_id, f"I have the details for {command_part}, sending the brochure shortly!")
+                            send_text(sender_id, f"I have details for {command_part}, sending brochure soon!")
 
                     except Exception as e:
-                        print(f"Parsing/Sending Error: {e}")
-                        # Agar crash ho, toh kam se kam text bhej do
+                        print(f"Image Logic Error: {e}")
                         send_text(sender_id, ai_response.replace("SHOW_PHOTO", ""))
                 else:
-                    # Normal Text Reply
                     send_text(sender_id, ai_response)
 
-                # --- SHEET UPDATE (NEW DUAL LOGIC) ---
-                handle_dual_sheets(sender_id, user_name, text_body, email, city, interest, reply_type)
+                # --- SHEET LOGGING ---
+                log_interaction(sender_id, user_name, text_body, email, city, interest, reply_type)
 
     except Exception as e:
         print(f"Webhook Error: {e}")
