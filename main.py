@@ -519,6 +519,7 @@
 import os
 import json
 import re
+import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
@@ -526,7 +527,6 @@ import pytz
 import requests
 from flask import Flask, request
 import google.generativeai as genai
-import time
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
@@ -540,212 +540,174 @@ GEMINI_API_KEY = "AIzaSyDlCNXnqqKTiDCDUluSpYqrgMGAGuiL2Tg"
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-flash-latest')
 
-# --- LOAD DATABASE (SECURE WAY) ---
+# --- LOAD DATABASE ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, 'data.json')
 KEY_FILE = os.path.join(BASE_DIR, 'google_key.json')
 
+PROPERTIES = []
 try:
     with open(DATA_FILE, 'r') as f:
         PROPERTIES = json.load(f)
-        print(f"✅ Database Loaded: {len(PROPERTIES)} properties found.")
+        print(f"✅ Loaded {len(PROPERTIES)} properties.")
 except Exception as e:
-    print(f"❌ Critical Error: data.json not found or invalid. {e}")
-    PROPERTIES = []
+    print(f"❌ Error loading data.json: {e}")
 
-# --- HELPER FUNCTIONS ---
+# --- HELPERS ---
 def get_dubai_time():
     try:
-        dubai_tz = pytz.timezone('Asia/Dubai')
-        return datetime.now(dubai_tz).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.now(pytz.timezone('Asia/Dubai')).strftime("%Y-%m-%d %H:%M:%S")
     except:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def format_phone_number(phone_id):
     phone_id = str(phone_id)
-    if phone_id.startswith("91") and len(phone_id) > 10:
-        return "+91", phone_id[2:]
-    elif phone_id.startswith("971"):
-        return "+971", phone_id[3:]
-    elif phone_id.startswith("1") and len(phone_id) > 10:
-        return "+1", phone_id[1:]
-    elif phone_id.startswith("44"):
-        return "+44", phone_id[2:]
-    else:
-        return "", phone_id 
+    if phone_id.startswith("91") and len(phone_id) > 10: return "+91", phone_id[2:]
+    elif phone_id.startswith("971"): return "+971", phone_id[3:]
+    elif phone_id.startswith("1") and len(phone_id) > 10: return "+1", phone_id[1:]
+    return "", phone_id
 
-# --- DUAL SHEET MANAGER ---
-def handle_dual_sheets(sender_id, user_name, message_content, email, city, interest, reply_type):
+# --- GOOGLE SHEETS ---
+def log_to_sheet(sender_id, user_name, msg, email, city, interest, reply_type):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
         client = gspread.authorize(creds)
         spreadsheet = client.open("Dubai Real Estate Leads")
         
-        current_time = get_dubai_time()
-        country_code, clean_phone = format_phone_number(sender_id)
+        ts = get_dubai_time()
+        code, phone = format_phone_number(sender_id)
 
         # 1. Logs
         try:
-            sheet_logs = spreadsheet.worksheet("Logs")
-            sheet_logs.append_row([current_time, user_name, country_code, clean_phone, message_content, reply_type])
-        except Exception as e:
-            print(f"Logs Error: {e}")
+            spreadsheet.worksheet("Logs").append_row([ts, user_name, code, phone, msg, reply_type])
+        except: pass
 
         # 2. Profiles
         try:
-            sheet_profiles = spreadsheet.worksheet("Profiles")
-            cell = None
-            try:
-                cell = sheet_profiles.find(sender_id)
-            except:
-                cell = None
-            
+            prof_sheet = spreadsheet.worksheet("Profiles")
+            cell = prof_sheet.find(sender_id)
             if cell:
-                row_num = cell.row
-                if user_name != "Unknown User": sheet_profiles.update_cell(row_num, 2, user_name)
-                if interest != "Not Specified": sheet_profiles.update_cell(row_num, 5, interest)
-                if email != "Not Provided": sheet_profiles.update_cell(row_num, 6, email)
-                if city != "Not Mentioned": sheet_profiles.update_cell(row_num, 7, city)
+                r = cell.row
+                if user_name != "Unknown User": prof_sheet.update_cell(r, 2, user_name)
+                if interest != "Not Specified": prof_sheet.update_cell(r, 5, interest)
+                if email != "Not Provided": prof_sheet.update_cell(r, 6, email)
+                if city != "Not Mentioned": prof_sheet.update_cell(r, 7, city)
             else:
-                sheet_profiles.append_row([current_time, user_name, country_code, clean_phone, interest, email, city, sender_id])
-        except Exception as e:
-            print(f"Profiles Error: {e}")
+                prof_sheet.append_row([ts, user_name, code, phone, interest, email, city, sender_id])
+        except: pass
             
     except Exception as e:
-        print(f"Sheet Connection Error: {e}")
+        print(f"Sheet Error: {e}")
 
-# --- WHATSAPP SENDERS ---
-def send_whatsapp_text(to_number, text):
+# --- WHATSAPP UTILS ---
+def send_text(to, body):
     try:
         url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        data = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"body": text}}
-        requests.post(url, headers=headers, json=data)
-    except Exception as e:
-        print(f"Send Error: {e}")
+        requests.post(url, headers=headers, json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": body}})
+    except Exception as e: print(f"Send Error: {e}")
 
-def send_whatsapp_image(to_number, image_url, caption):
+def send_image(to, link, caption):
     try:
         url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        data = {"messaging_product": "whatsapp", "to": to_number, "type": "image", "image": {"link": image_url, "caption": caption}}
-        requests.post(url, headers=headers, json=data)
-    except Exception as e:
-        print(f"Image Error: {e}")
+        requests.post(url, headers=headers, json={"messaging_product": "whatsapp", "to": to, "type": "image", "image": {"link": link, "caption": caption}})
+    except Exception as e: print(f"Image Error: {e}")
 
-# --- SERVER ---
-@app.route('/webhook', methods=['GET'])
-def verify():
-    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
-        return request.args.get("hub.challenge")
-    return "Verification Failed", 403
+# --- IMAGE SEARCH ENGINE (NEW LOGIC) ---
+def find_and_send_images(user_id, search_term):
+    print(f"🔎 Searching DB for: {search_term}")
+    search_term = search_term.lower().strip()
+    
+    count = 0
+    # Simple Logic: Agar JSON ke 'location' mein search word hai, toh photo bhej do
+    for prop in PROPERTIES:
+        if search_term in prop['location'].lower():
+            caption = f"🏡 *{prop['name']}*\n📍 {prop['location']}\n💰 {prop['price']}"
+            send_image(user_id, prop['image_url'], caption)
+            count += 1
+            time.sleep(1) # Gap to prevent blocking
+            if count >= 4: # Send max 4 images
+                break
+    
+    return count > 0
 
-@app.route('/webhook', methods=['POST'])
+# --- WEBHOOK ---
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
+    if request.method == 'GET':
+        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
+            return request.args.get("hub.challenge")
+        return "Failed", 403
+
     data = request.json
     try:
         if data.get("object"):
-            entry = data["entry"][0]
-            changes = entry["changes"][0]
-            value = changes["value"]
-            
-            if "messages" in value:
-                message = value["messages"][0]
-                sender_id = message["from"]
-                text_body = message["text"]["body"]
+            entry = data["entry"][0]["changes"][0]["value"]
+            if "messages" in entry:
+                msg = entry["messages"][0]
+                sender_id = msg["from"]
+                text_body = msg["text"]["body"]
                 
-                # Extract Data
-                user_name = "Unknown User"
-                if "contacts" in value:
-                    try: user_name = value["contacts"][0]["profile"]["name"]
-                    except: pass
-
-                email_match = re.search(r'[\w\.-]+@[\w\.-]+', text_body)
-                user_email = email_match.group(0) if email_match else "Not Provided"
-
-                demo_cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "yas"]
-                user_city = "Not Mentioned"
-                for city in demo_cities:
-                    if city in text_body.lower():
-                        user_city = city.title()
+                # Extract Name
+                user_name = entry.get("contacts", [{}])[0].get("profile", {}).get("name", "Unknown User")
+                
+                # Basic Extraction
+                email = (re.search(r'[\w\.-]+@[\w\.-]+', text_body) or [None])[0] or "Not Provided"
+                
+                cities = ["dubai", "marina", "downtown", "meydan"]
+                city = "Not Mentioned"
+                for c in cities:
+                    if c in text_body.lower(): 
+                        city = c.title() 
                         break
                 
-                user_interest = "Not Specified"
-                if "luxury" in text_body.lower(): user_interest = "Luxury"
-                elif "standard" in text_body.lower(): user_interest = "Standard"
-                elif "budget" in text_body.lower() or "affordable" in text_body.lower(): user_interest = "Affordable"
+                interest = "Not Specified"
+                if "luxury" in text_body.lower(): interest = "Luxury"
+                elif "standard" in text_body.lower(): interest = "Standard"
+                elif "affordable" in text_body.lower(): interest = "Affordable"
 
-                print(f"📩 Input: {text_body} | City: {user_city}")
+                print(f"📩 {user_name}: {text_body}")
 
-                # --- SARAH LOGIC ---
+                # --- AI LOGIC ---
                 prompt = f"""
-                You are Sarah, a Real Estate Consultant.
-                Your Data:
-                - Locations: Dubai Marina, Downtown Dubai, Meydan.
-                - Inventory: Apartments & Villas.
+                Act as Sarah, Real Estate Agent.
+                User: "{text_body}"
+                Context City: "{city}"
                 
-                Instructions:
-                1. If user says 'Hi', ask about City.
-                2. If user mentions City, ask about Budget/Tier.
-                3. If user says 'Show photos' AND you know the city (e.g. {user_city}), reply EXACTLY:
-                   "Here are the best options in {user_city}. SHOW_PHOTO: {user_city}"
-                4. If user asks for photos but City is unknown, ask: "Which area?"
-                5. Keep replies short (<50 words).
-                
-                User said: "{text_body}"
-                Context City: "{user_city}"
+                Rules:
+                1. If user asks for photos of a specific place (e.g. Marina), reply: "Here are the best options. SHOW_PHOTO: Marina"
+                2. If user just says "Show photos" and Context City is known, reply: "Here you go. SHOW_PHOTO: {city}"
+                3. If user says "Show photos" but City is UNKNOWN, ask: "Which area? Marina, Downtown, or Meydan?"
+                4. Otherwise, keep reply short and friendly.
                 """
                 
                 reply_type = "Text Reply"
                 try:
-                    # Safety settings to prevent blocking
-                    response = model.generate_content(prompt)
-                    full_reply = response.text.strip().replace("**", "*")
+                    ai_response = model.generate_content(prompt).text.strip().replace("**", "*")
                 except Exception as e:
-                    print(f"Gemini API Error: {e}")
-                    full_reply = "I'm checking the latest inventory. Could you remind me which area you prefer?"
+                    print(f"Gemini Error: {e}")
+                    ai_response = "I'm connecting to the listings... just a sec! Could you say that again?"
 
-                # --- HANDLE RESPONSE ---
-                if "SHOW_PHOTO" in full_reply:
+                # --- RESPONSE HANDLING ---
+                if "SHOW_PHOTO" in ai_response:
                     reply_type = "Image Sent"
-                    try:
-                        parts = full_reply.split("SHOW_PHOTO")
-                        text_part = parts[0].strip()
-                        command_part = parts[1].strip().lower() # e.g., "dubai marina"
-
-                        if text_part: send_whatsapp_text(sender_id, text_part)
-                        
-                        # --- NEW MATCHING LOGIC (MULTIPLE IMAGES) ---
-                        # Clean the command key
-                        search_key = command_part.replace(":", "").replace(".", "").strip()
-                        print(f"🔍 Searching for images matching: '{search_key}'")
-
-                        found_count = 0
-                        # Loop through ALL properties
-                        for prop in PROPERTIES:
-                            # INVERSE CHECK: Does "Marina" exist inside "Dubai Marina"? YES.
-                            if prop['location'].lower() in search_key:
-                                caption = f"📸 *{prop['name']}*\n📍 {prop['location']}\n💰 {prop['price_aed']} AED"
-                                send_whatsapp_image(sender_id, prop['image_url'], caption)
-                                found_count += 1
-                                time.sleep(1) # Thoda gap taaki WhatsApp block na kare
-                                
-                                # Limit to 4 images max
-                                if found_count >= 4:
-                                    break
-                        
-                        if found_count == 0:
-                            send_whatsapp_text(sender_id, "I have properties there, but I'm updating the photos. Sending you the brochure in a bit!")
-
-                    except Exception as e:
-                        print(f"Image Logic Error: {e}")
-                        send_whatsapp_text(sender_id, "Here are the details.")
+                    parts = ai_response.split("SHOW_PHOTO")
+                    text_reply = parts[0].strip()
+                    search_key = parts[1].replace(":", "").strip()
+                    
+                    if text_reply: send_text(sender_id, text_reply)
+                    
+                    # Call New Search Function
+                    found = find_and_send_images(sender_id, search_key)
+                    if not found:
+                        send_text(sender_id, f"I have great units in {search_key}, getting the photos ready. sending brochure soon!")
                 else:
-                    send_whatsapp_text(sender_id, full_reply)
+                    send_text(sender_id, ai_response)
 
                 # --- LOGGING ---
-                handle_dual_sheets(sender_id, user_name, text_body, user_email, user_city, user_interest, reply_type)
+                log_to_sheet(sender_id, user_name, text_body, email, city, interest, reply_type)
 
     except Exception as e:
         print(f"Webhook Error: {e}")
@@ -753,5 +715,5 @@ def webhook():
     return "OK", 200
 
 if __name__ == '__main__':
-    print("🚀 Bot is running on Port 5000...")
+    print("🚀 Bot Started on Port 5000")
     app.run(port=5000)
