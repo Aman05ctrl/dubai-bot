@@ -1,56 +1,56 @@
 [
     {
-        "id": 101,
+        "id": 1,
         "name": "Marina Royal Suite",
         "location": "Dubai Marina",
         "price": "2.5M AED",
         "image_url": "https://images.pexels.com/photos/323780/pexels-photo-323780.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 102,
-        "name": "Marina Sunset Apt",
+        "id": 2,
+        "name": "Marina Sunset View",
         "location": "Dubai Marina",
         "price": "1.8M AED",
         "image_url": "https://images.pexels.com/photos/3787839/pexels-photo-3787839.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 103,
-        "name": "Ocean View Loft",
+        "id": 3,
+        "name": "Ocean Heights",
         "location": "Dubai Marina",
         "price": "3.1M AED",
         "image_url": "https://images.pexels.com/photos/1438832/pexels-photo-1438832.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 104,
-        "name": "The Palm Horizon",
+        "id": 4,
+        "name": "Pier 7 Exclusive",
         "location": "Dubai Marina",
         "price": "2.2M AED",
         "image_url": "https://images.pexels.com/photos/323705/pexels-photo-323705.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 201,
+        "id": 5,
         "name": "Burj Khalifa View",
         "location": "Downtown Dubai",
         "price": "4.5M AED",
         "image_url": "https://images.pexels.com/photos/162031/dubai-tower-arab-khalifa-162031.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 202,
+        "id": 6,
         "name": "Downtown Luxury",
         "location": "Downtown Dubai",
         "price": "3.8M AED",
         "image_url": "https://images.pexels.com/photos/442579/pexels-photo-442579.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 203,
-        "name": "Boulevard Residence",
+        "id": 7,
+        "name": "Boulevard Point",
         "location": "Downtown Dubai",
         "price": "2.9M AED",
         "image_url": "https://images.pexels.com/photos/3769312/pexels-photo-3769312.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 204,
-        "name": "Fountain Views",
+        "id": 8,
+        "name": "Opera District",
         "location": "Downtown Dubai",
         "price": "5.1M AED",
         "image_url": "https://images.pexels.com/photos/2044434/pexels-photo-2044434.jpeg?auto=compress&cs=tinysrgb&w=600"
