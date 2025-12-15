@@ -721,178 +721,246 @@
 import os
 import json
 import re
-import time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import pytz
 import requests
-import string
 from flask import Flask, request
 import google.generativeai as genai
 
 # --- CONFIGURATION ---
 app = Flask(__name__)
 
-# ⚠️ SECURITY WARNING: NEVER SHARE YOUR PRIVATE KEYS OR TOKENS
-# Make sure your google_key.json is in the same folder
+# REPLACE WITH YOUR KEYS
 WHATSAPP_TOKEN = "EAAPf2nk4ZAecBQM3kg6FZCsPVPWFQOZBMySzYAhvbjkNHQclZA0hjbTCzV3ixoZBpK4I2a2dhMCrDTpY8lrUckp1uons8axHgtEzZA3JzcWYcp4qim6BHX5ePZCRwKLKNcddMHHc11epUQkO0kvHEwX0wPIdxZATDTnZAiNyBohlNutgqvK0ZA4ZBZAH1EfZCdpypoXtOlAZDZD" 
 PHONE_NUMBER_ID = "904076146124413" 
 GEMINI_API_KEY = "AIzaSyDlCNXnqqKTiDCDUluSpYqrgMGAGuiL2Tg" 
 
-# --- SETUP GEMINI (CRASH FIX #1: Use Correct Model) ---
+# Setup Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-# 'gemini-flash-latest' often fails. Use 'gemini-1.5-flash' or 'gemini-pro'
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-flash-latest')
 
-# --- MEMORY & DEDUPLICATION (FRIEND'S FIX) ---
-# In a real app, use a database (Redis/SQL). For now, this works in memory.
-PROCESSED_MSG_IDS = set()
-USER_CONTEXT = {} # Stores {sender_id: "City Name"}
-
-# --- LOAD DATABASE ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, 'data.json')
-KEY_FILE = os.path.join(BASE_DIR, 'google_key.json')
-
-PROPERTIES = []
+# Load Database
 try:
-    with open(DATA_FILE, 'r') as f:
+    with open('data.json', 'r') as f:
         PROPERTIES = json.load(f)
-        print(f"✅ Loaded {len(PROPERTIES)} properties.")
 except Exception as e:
-    print(f"❌ Error loading data.json: {e}")
+    print(f"Warning: data.json not found. Error: {e}")
+    PROPERTIES = []
 
-# --- HELPERS ---
+# --- HELPER: TIMEZONE & PHONE FORMAT ---
 def get_dubai_time():
     try:
-        return datetime.now(pytz.timezone('Asia/Dubai')).strftime("%Y-%m-%d %H:%M:%S")
+        dubai_tz = pytz.timezone('Asia/Dubai')
+        return datetime.now(dubai_tz).strftime("%Y-%m-%d %H:%M:%S")
     except:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def format_phone_number(phone_id):
     phone_id = str(phone_id)
-    if phone_id.startswith("91") and len(phone_id) > 10: return "+91", phone_id[2:]
-    elif phone_id.startswith("971"): return "+971", phone_id[3:]
-    elif phone_id.startswith("1") and len(phone_id) > 10: return "+1", phone_id[1:]
-    return "", phone_id
+    if phone_id.startswith("91") and len(phone_id) > 10:
+        return "+91", phone_id[2:]
+    elif phone_id.startswith("971"):
+        return "+971", phone_id[3:]
+    elif phone_id.startswith("1") and len(phone_id) > 10:
+        return "+1", phone_id[1:]
+    elif phone_id.startswith("44"):
+        return "+44", phone_id[2:]
+    else:
+        return "", phone_id 
 
-# --- WHATSAPP UTILS ---
-def send_text(to, body):
+# --- DUAL SHEET MANAGER (PROFILES + LOGS) ---
+def handle_dual_sheets(sender_id, user_name, message, email, city, interest, reply_type):
+    try:
+        # 1. Connect to Spreadsheet
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("google_key.json", scope)
+        client = gspread.authorize(creds)
+        
+        # Open the Main Spreadsheet
+        spreadsheet = client.open("Dubai Real Estate Leads")
+        
+        # --- TASK 1: UPDATE "LOGS" (Always Append) ---
+        try:
+            # Ensure you have a tab named "Logs"
+            sheet_logs = spreadsheet.worksheet("Logs")
+            current_time = get_dubai_time()
+            # Columns: Timestamp | Name | Phone | Message | Bot Action
+            sheet_logs.append_row([current_time, user_name, sender_id, message, reply_type])
+            print(f"📝 Log added to History.")
+        except Exception as e:
+            print(f"❌ Error in Logs Sheet (Check if tab 'Logs' exists): {e}")
+
+        # --- TASK 2: UPDATE "PROFILES" (CRM Logic - Update if exists) ---
+        try:
+            # Ensure you have a tab named "Profiles"
+            sheet_profiles = spreadsheet.worksheet("Profiles")
+            current_time = get_dubai_time()
+            country_code, clean_phone = format_phone_number(sender_id)
+
+            # Search for User by Raw ID (Column H -> Index 8)
+            cell = None
+            try:
+                cell = sheet_profiles.find(sender_id)
+            except:
+                cell = None
+            
+            if cell:
+                # UPDATE EXISTING USER
+                row_num = cell.row
+                print(f"🔄 Updating Profile at Row {row_num}...")
+                
+                # Only update empty/new fields
+                if user_name != "Unknown User": 
+                    sheet_profiles.update_cell(row_num, 2, user_name)
+                if interest != "Not Specified": 
+                    sheet_profiles.update_cell(row_num, 5, interest)
+                if email != "Not Provided": 
+                    sheet_profiles.update_cell(row_num, 6, email)
+                if city != "Not Mentioned": 
+                    sheet_profiles.update_cell(row_num, 7, city)
+            else:
+                # CREATE NEW USER PROFILE
+                print(f"🆕 Creating New Profile for {user_name}")
+                # A:Date | B:Name | C:Code | D:Phone | E:Interest | F:Email | G:City | H:RawID
+                sheet_profiles.append_row([
+                    current_time, 
+                    user_name, 
+                    country_code, 
+                    clean_phone, 
+                    interest, 
+                    email, 
+                    city, 
+                    sender_id
+                ])
+        except Exception as e:
+            print(f"❌ Error in Profiles Sheet (Check if tab 'Profiles' exists): {e}")
+            
+    except Exception as e:
+        print(f"❌ Gspread Connection Error: {e}")
+
+# --- WHATSAPP SENDERS ---
+def send_whatsapp_text(to_number, text):
     try:
         url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        requests.post(url, headers=headers, json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": body}})
-    except Exception as e: print(f"Send Error: {e}")
+        data = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"body": text}}
+        requests.post(url, headers=headers, json=data)
+    except Exception as e:
+        print(f"Send Error: {e}")
 
-def send_image(to, link, caption):
+def send_whatsapp_image(to_number, image_url, caption):
     try:
         url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
         headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        requests.post(url, headers=headers, json={"messaging_product": "whatsapp", "to": to, "type": "image", "image": {"link": link, "caption": caption}})
-    except Exception as e: print(f"Image Error: {e}")
+        data = {"messaging_product": "whatsapp", "to": to_number, "type": "image", "image": {"link": image_url, "caption": caption}}
+        requests.post(url, headers=headers, json=data)
+    except Exception as e:
+        print(f"Image Error: {e}")
 
-# --- IMAGE SEARCH ENGINE ---
-def find_and_send_images(user_id, search_term):
-    print(f"🔎 Searching DB for: {search_term}")
-    search_term = search_term.lower().strip()
-    count = 0
-    for prop in PROPERTIES:
-        # Simple match: if search term is inside the location string
-        if search_term in prop['location'].lower():
-            caption = f"🏡 *{prop['name']}*\n📍 {prop['location']}\n💰 {prop['price']}"
-            send_image(user_id, prop['image_url'], caption)
-            count += 1
-            time.sleep(1) 
-            if count >= 4: break
-    return count > 0
+# --- SERVER ---
+@app.route('/webhook', methods=['GET'])
+def verify():
+    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
+        return request.args.get("hub.challenge")
+    return "Verification Failed", 403
 
-# --- WEBHOOK ---
-@app.route('/webhook', methods=['GET', 'POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    if request.method == 'GET':
-        if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
-            return request.args.get("hub.challenge")
-        return "Failed", 403
-
     data = request.json
     try:
         if data.get("object"):
-            entry = data["entry"][0]["changes"][0]["value"]
-            if "messages" in entry:
-                msg = entry["messages"][0]
+            entry = data["entry"][0]
+            changes = entry["changes"][0]
+            value = changes["value"]
+            
+            if "messages" in value:
+                message = value["messages"][0]
+                sender_id = message["from"]
+                text_body = message["text"]["body"]
                 
-                # --- FRIEND'S FIX 1: DEDUPLICATION ---
-                msg_id = msg.get("id")
-                if msg_id in PROCESSED_MSG_IDS:
-                    return "OK", 200 # Skip duplicate
-                PROCESSED_MSG_IDS.add(msg_id)
+                # --- DATA EXTRACTION ---
+                user_name = "Unknown User"
+                if "contacts" in value:
+                    try:
+                        user_name = value["contacts"][0]["profile"]["name"]
+                    except:
+                        pass
 
-                # --- FRIEND'S FIX 2: IGNORE NON-TEXT ---
-                if msg.get("type") != "text":
-                    return "OK", 200 # Ignore images/audio for now
-                
-                sender_id = msg["from"]
-                text_body = msg["text"]["body"]
-                user_name = entry.get("contacts", [{}])[0].get("profile", {}).get("name", "User")
+                email_match = re.search(r'[\w\.-]+@[\w\.-]+', text_body)
+                user_email = email_match.group(0) if email_match else "Not Provided"
 
-                # --- FRIEND'S FIX 3: MEMORY ---
-                # 1. Update Memory if user mentions a city
-                cities = ["dubai", "marina", "downtown", "meydan"]
-                detected_city = None
-                for c in cities:
-                    if c in text_body.lower():
-                        detected_city = c.title()
-                        USER_CONTEXT[sender_id] = detected_city # Save to memory
+                demo_cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "yas", "uk", "london", "manchester"]
+                user_city = "Not Mentioned"
+                for city in demo_cities:
+                    if city in text_body.lower():
+                        user_city = city.title()
                         break
                 
-                # 2. Retrieve from Memory
-                saved_city = USER_CONTEXT.get(sender_id, "Not Mentioned")
-                
-                print(f"📩 {user_name}: {text_body} | Memory: {saved_city}")
+                user_interest = "Not Specified"
+                if "luxury" in text_body.lower(): user_interest = "Luxury"
+                elif "standard" in text_body.lower(): user_interest = "Standard"
+                elif "budget" in text_body.lower() or "affordable" in text_body.lower(): user_interest = "Affordable"
 
-                # --- AI PROMPT (UPDATED) ---
+                print(f"Incoming: {user_name} | Msg: {text_body}")
+
+                # --- SARAH LOGIC ---
                 prompt = f"""
-                Act as Sarah, Real Estate Agent.
-                User Input: "{text_body}"
-                Known City: "{saved_city}"
-                
-                Instructions:
-                1. If 'Known City' is 'Not Mentioned', ask them which area they prefer (Marina, Downtown, Meydan).
-                2. If 'Known City' IS set (e.g., Marina), DO NOT ask for the city again. instead, ask about Budget or Bedroom count.
-                3. If user says "Show photos", reply strictly: "Here you go. SHOW_PHOTO: {saved_city}"
-                4. Keep it short and human.
+                You are Sarah, a Senior Property Consultant. 
+                TONE: Professional but warm, casual, and direct. Use emojis (👋, 🏡).
+                GOAL: Guide them from City -> Budget -> Closing.
+                Current User Input: "{text_body}"
+                User's Extracted City: "{user_city}"
+                YOUR DATA:
+                - Locations: Dubai (Marina, Downtown), Abu Dhabi (Yas), UK (London).
+                - Luxury Tier: "The Royal Penthouse Collection" (15M AED).
+                - Standard Tier: "Sunrise Family Apartments" (2.5M AED).
+                INSTRUCTIONS:
+                1. GREETING: If user says Hi/Hello: "Hi there! 👋 I'm Sarah. Which city or area are you looking into today?"
+                2. LOCATION: If location mentioned: "Excellent choice! 🏙️ '{user_city}' is fantastic. Do you prefer Luxury, Standard, or Affordable?"
+                3. BUDGET (MAGIC STEP): If budget/tier mentioned:
+                   - Describe property politely.
+                   - THEN append: "SHOW_PHOTO: {user_city}"
+                4. IMAGE REQUEST: If asked for photos: "Here is a glimpse. SHOW_PHOTO: {user_city}"
+                5. EMAIL: If interested, ask for email politely.
                 """
                 
-                reply_type = "Text Reply"
+                reply_type = "Text Reply" # Default log status
                 try:
-                    # CRASH FIX: Using the corrected 'model' defined at top
-                    ai_response = model.generate_content(prompt).text.strip().replace("**", "*")
-                except Exception as e:
-                    # PRINT REAL ERROR TO CONSOLE
-                    print(f"❌ CRITICAL GEMINI ERROR: {e}")
-                    ai_response = "I'm having a tech glitch. Are you looking for Marina or Downtown?"
+                    response = model.generate_content(prompt)
+                    full_reply = response.text.strip().replace("**", "*")
+                except:
+                    full_reply = "I'm checking the database, please wait a moment."
 
-                # --- RESPONSE HANDLING ---
-                if "SHOW_PHOTO" in ai_response:
+                # --- HANDLE RESPONSE & DETERMINE LOG TYPE ---
+                if "SHOW_PHOTO" in full_reply:
                     reply_type = "Image Sent"
                     try:
-                        parts = ai_response.split("SHOW_PHOTO")
-                        text_reply = parts[0].strip()
+                        parts = full_reply.split("SHOW_PHOTO")
+                        text_part = parts[0].strip()
+                        command_part = parts[1] if len(parts) > 1 else ": unknown"
+
+                        if text_part: send_whatsapp_text(sender_id, text_part)
                         
-                        # Clean up the key (remove punctuation/spaces)
-                        raw_key = parts[1].strip()
-                        search_key = raw_key.translate(str.maketrans('', '', string.punctuation)).strip()
+                        location_key = command_part.replace(":", "").replace("*", "").replace(".", "").strip().lower()
                         
-                        if text_reply: send_text(sender_id, text_reply)
-                        
-                        found = find_and_send_images(sender_id, search_key)
-                        if not found:
-                            send_text(sender_id, f"I'm sending the brochure for {search_key} shortly!")
-                    except:
-                        send_text(sender_id, "Here are the photos!")
+                        found = False
+                        for prop in PROPERTIES:
+                            if location_key in prop['location'].lower():
+                                found = True
+                                caption = f"📸 *View:* {prop['name']}\n*Price:* {prop['price_aed']} AED\n*ROI:* {prop['roi']}"
+                                send_whatsapp_image(sender_id, prop['image_url'], caption)
+                                break
+                    except Exception as e:
+                        print(f"Hybrid Error: {e}")
+                        send_whatsapp_text(sender_id, full_reply.replace("SHOW_PHOTO", ""))
                 else:
-                    send_text(sender_id, ai_response)
+                    send_whatsapp_text(sender_id, full_reply)
+
+                # --- DUAL SHEET LOGGING ---
+                # Hum logging sabse last mein kar rahe hain taaki hum 'reply_type' bhi save kar sakein
+                handle_dual_sheets(sender_id, user_name, text_body, user_email, user_city, user_interest, reply_type)
 
     except Exception as e:
         print(f"Webhook Error: {e}")
@@ -900,5 +968,4 @@ def webhook():
     return "OK", 200
 
 if __name__ == '__main__':
-    print("🚀 Bot Started on Port 5000")
     app.run(port=5000)
