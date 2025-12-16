@@ -724,7 +724,7 @@ import re
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
-import pytz  # DUBAI TIME ke liye zaroori
+import pytz  # NEW: For Dubai Timezone
 import requests
 from flask import Flask, request
 import google.generativeai as genai
@@ -751,28 +751,22 @@ except Exception as e:
 
 # --- HELPER: TIMEZONE & PHONE FORMAT ---
 def get_dubai_time():
-    # Server time ko Dubai Time mein convert karna
-    try:
-        dubai_tz = pytz.timezone('Asia/Dubai')
-        return datetime.now(dubai_tz).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        # Fallback agar pytz fail ho (rare case)
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    dubai_tz = pytz.timezone('Asia/Dubai')
+    return datetime.now(dubai_tz).strftime("%Y-%m-%d %H:%M:%S")
 
 def format_phone_number(phone_id):
-    # Country code alag karna
+    # Basic logic to separate Code and Number
+    # WhatsApp usually sends '91847...' or '97150...'
     if phone_id.startswith("91"):
         return "+91", phone_id[2:]
     elif phone_id.startswith("971"):
         return "+971", phone_id[3:]
-    elif phone_id.startswith("1"):
+    elif phone_id.startswith("1"): # USA
         return "+1", phone_id[1:]
-    elif phone_id.startswith("44"):
-        return "+44", phone_id[2:]
     else:
-        return "", phone_id # Default
+        return "", phone_id # Unknown code
 
-# --- GOOGLE SHEET FUNCTION (STRICTLY SAFE UPDATE) ---
+# --- GOOGLE SHEET FUNCTION (SMART UPSERT) ---
 def update_sheet_smartly(sender_id, user_name, email, city, interest):
     try:
         # 1. Connect
@@ -781,64 +775,57 @@ def update_sheet_smartly(sender_id, user_name, email, city, interest):
         client = gspread.authorize(creds)
         sheet = client.open("Dubai Real Estate Leads").sheet1
         
-        # 2. Prepare Data
+        # 2. Get Dubai Time & Phone Format
         current_time = get_dubai_time()
         country_code, clean_phone = format_phone_number(sender_id)
         
-        # 3. Check if User Exists (Search by Raw Phone ID in Column H)
-        # Note: Column H index is 8
-        cell = None
+        # 3. Check if User Exists (Search by Phone ID)
+        # We assume Phone Number is in Column C (Index 3)
         try:
-            cell = sheet.find(sender_id) 
-        except gspread.exceptions.CellNotFound:
-            cell = None
-        except Exception as e:
-            print(f"Search Error: {e}")
+            cell = sheet.find(sender_id) # Search for the exact WhatsApp ID
+        except:
             cell = None
 
         if cell:
-            # --- EXISTING USER (SAFE UPDATE ONLY) ---
-            # Rule: Date (Col 1), Code (Col 3), Phone (Col 4) ko touch nahi karna.
-            # Rule: Sirf wahi cell update karo jo user ne naya diya hai.
-            
+            # --- UPDATE EXISTING USER ---
             row_num = cell.row
-            print(f"🔄 User found at Row {row_num}. Checking for new info...")
+            print(f"🔄 Updating existing user at Row {row_num}")
             
-            # Name Update: Sirf tab jab wo "Unknown" na ho
+            # Update Time
+            sheet.update_cell(row_num, 1, current_time) 
+            
+            # Only update Name if we have a new one and it wasn't there
             if user_name != "Unknown User":
                 sheet.update_cell(row_num, 2, user_name)
                 
-            # Interest Update (Column E = 5)
-            if interest != "Not Specified":
-                sheet.update_cell(row_num, 5, interest) 
-                print(f"   -> Updated Interest to {interest}")
+            # Update Interest if specific interest found
+            if interest and interest != "Not Specified":
+                sheet.update_cell(row_num, 5, interest) # Column E
                 
-            # Email Update (Column F = 6)
+            # Update Email if provided
             if email != "Not Provided":
-                sheet.update_cell(row_num, 6, email)    
-                print(f"   -> Updated Email to {email}")
+                sheet.update_cell(row_num, 6, email)    # Column F
                 
-            # City Update (Column G = 7)
+            # Update City if provided
             if city != "Not Mentioned":
-                sheet.update_cell(row_num, 7, city)     
-                print(f"   -> Updated City to {city}")
+                sheet.update_cell(row_num, 7, city)     # Column G
 
         else:
-            # --- NEW USER (CREATE ROW) ---
+            # --- CREATE NEW USER ---
             print(f"🆕 Creating new user: {user_name}")
-            
-            # Column Structure:
-            # A: Date | B: Name | C: Code | D: Phone | E: Interest | F: Email | G: City | H: RAW_ID
+            # Format: [Date, Name, Phone(Clean), CountryCode, Interest, Email, City, RawID]
+            # Adjust column order to match your screenshot:
+            # A: Date | B: Name | C: Phone Number | D: CountryCode | E: Interest | F: Email | G: City | H: HiddenID
             
             sheet.append_row([
-                current_time,   # A: Join Date
-                user_name,      # B: Name
-                country_code,   # C: Country Code (+91)
-                clean_phone,    # D: Clean Phone
-                interest,       # E: Interest
-                email,          # F: Email
-                city,           # G: City
-                sender_id       # H: Raw ID (Hidden/System)
+                current_time, 
+                user_name, 
+                clean_phone,
+                country_code, 
+                interest, 
+                email, 
+                city,
+                sender_id # Keep raw ID at end for searching later
             ])
             
     except Exception as e:
@@ -846,22 +833,16 @@ def update_sheet_smartly(sender_id, user_name, email, city, interest):
 
 # --- WHATSAPP SENDERS ---
 def send_whatsapp_text(to_number, text):
-    try:
-        url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
-        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        data = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"body": text}}
-        requests.post(url, headers=headers, json=data)
-    except Exception as e:
-        print(f"WhatsApp Send Error: {e}")
+    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    data = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"body": text}}
+    requests.post(url, headers=headers, json=data)
 
 def send_whatsapp_image(to_number, image_url, caption):
-    try:
-        url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
-        headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-        data = {"messaging_product": "whatsapp", "to": to_number, "type": "image", "image": {"link": image_url, "caption": caption}}
-        requests.post(url, headers=headers, json=data)
-    except Exception as e:
-        print(f"WhatsApp Image Error: {e}")
+    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
+    data = {"messaging_product": "whatsapp", "to": to_number, "type": "image", "image": {"link": image_url, "caption": caption}}
+    requests.post(url, headers=headers, json=data)
 
 # --- SERVER ---
 @app.route('/webhook', methods=['GET'])
@@ -892,11 +873,11 @@ def webhook():
                     except:
                         pass
 
-                # Email Extraction
+                # Email
                 email_match = re.search(r'[\w\.-]+@[\w\.-]+', text_body)
                 user_email = email_match.group(0) if email_match else "Not Provided"
 
-                # City Extraction
+                # City
                 demo_cities = ["dubai", "marina", "downtown", "meydan", "abudhabi", "yas", "uk", "london", "manchester"]
                 user_city = "Not Mentioned"
                 for city in demo_cities:
@@ -904,7 +885,7 @@ def webhook():
                         user_city = city.title()
                         break
                 
-                # Interest Extraction
+                # Interest (Luxury/Standard/Affordable)
                 user_interest = "Not Specified"
                 if "luxury" in text_body.lower(): user_interest = "Luxury"
                 elif "standard" in text_body.lower(): user_interest = "Standard"
@@ -913,10 +894,11 @@ def webhook():
                 print(f"Extracted: {user_name} | {user_email} | {user_city} | {user_interest}")
 
                 # --- 2. UPDATE SHEET (SMARTLY) ---
-                # Naya logic yahan call hoga with fixed columns
+                # This will update the row if user exists, or create new if not
                 update_sheet_smartly(sender_id, user_name, user_email, user_city, user_interest)
 
                 # --- 3. SARAH PERSONA LOGIC ---
+                
                 prompt = f"""
                 You are Sarah, a Senior Property Consultant. You are chatting with a client on WhatsApp.
                 TONE: Professional but warm, casual, and direct. Use emojis naturally (👋, 🏡, ✨).
@@ -939,45 +921,33 @@ def webhook():
 
                 3. BUDGET RECEIVED (THE MAGIC STEP): 
                    If the user mentions 'Luxury', 'Standard', or 'Budget':
-                   - First, describe the property nicely based on the 'YOUR DATA' section.
-                   - THEN, strictly append this code at the end: "SHOW_PHOTO: {user_city}"
-                   (This will automatically send them the image while you talk).
+                   - Describe the property nicely.
+                   - THEN, strictly append this code: "SHOW_PHOTO: {user_city}"
 
                 4. DIRECT IMAGE REQUEST: 
                    If the user asks "Show me photos" or "Images", reply:
                    "Here is a glimpse of what we have available. SHOW_PHOTO: {user_city}"
+                   
+                5. CONTACT COLLECTION (The Polity Rule):
+                   If the conversation is going well and they show interest, gently ask:
+                   "To share the brochure and floor plans, may I have your email address? 📧"
 
-                5. OUT OF SCOPE: If they ask for a city not in the list (e.g. Tokyo), redirect them politely to Dubai or UK.
-
-                6. EMAIL COLLECTION:
-                   If the conversation is progressing and they show interest, gently ask:
-                   "To share the full brochure and floor plans, may I have your email address? 📧"
+                6. OUT OF SCOPE: If they ask for a city not in the list, redirect politely.
                 """
                 
                 # Generate AI Response
-                try:
-                    response = model.generate_content(prompt)
-                    full_reply = response.text.strip()
-                    full_reply = full_reply.replace("**", "*") # Fix Bold
-                except Exception as e:
-                    print(f"Gemini Error: {e}")
-                    full_reply = "I'm having a little trouble connecting to my database. Could you please say that again?"
-
-                # --- 4. HANDLE RESPONSE (Photo vs Text) ---
+                response = model.generate_content(prompt)
+                full_reply = response.text.strip()
+                full_reply = full_reply.replace("**", "*") # Fix Bold
+                
+                # --- 4. HANDLE RESPONSE ---
                 if "SHOW_PHOTO" in full_reply:
                     try:
-                        # Logic to split text and command safely
-                        parts = full_reply.split("SHOW_PHOTO")
-                        text_part = parts[0].strip()
-                        
-                        if len(parts) > 1:
-                            command_part = parts[1]
-                        else:
-                            command_part = ": unknown" # Fallback
-
+                        text_part = full_reply.split("SHOW_PHOTO")[0].strip()
                         if text_part:
                             send_whatsapp_text(sender_id, text_part)
                         
+                        command_part = full_reply.split("SHOW_PHOTO")[1]
                         location_part = command_part.replace(":", "").strip().lower()
                         location_key = location_part.replace("*", "").replace(".", "")
                         
@@ -990,21 +960,19 @@ def webhook():
                                 break
                         
                         if not found:
-                             pass # Image nahi mili toh sirf text kaafi hai
+                             pass # Just text sent is fine
                             
                     except Exception as e:
                         print(f"Error parsing hybrid response: {e}")
-                        # Fallback: Agar parsing fail ho toh poora text bhej do (bina command ke)
                         send_whatsapp_text(sender_id, full_reply.replace("SHOW_PHOTO", ""))
                 else:
                     send_whatsapp_text(sender_id, full_reply)
 
     except Exception as e:
-        print(f"Webhook Error: {e}")
+        print(f"Error: {e}")
 
     return "OK", 200
 
 if __name__ == '__main__':
-    # Render uses Gunicorn, but this is fine for local testing
     print("🚀 Bot is running on Port 5000...")
     app.run(port=5000)
