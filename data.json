@@ -1,58 +1,29 @@
 [
     {
         "id": 1,
-        "name": "Marina Royal Suite",
-        "location": "Dubai Marina",
-        "price_aed": "2.5M AED",
-        "image_url": "https://images.pexels.com/photos/323780/pexels-photo-323780.jpeg?auto=compress&cs=tinysrgb&w=600"
-    },
-    {
-        "id": 2,
-        "name": "Marina Sunset View",
-        "location": "Dubai Marina",
-        "price_aed": "1.8M AED",
+        "name": "Luxury Marina View",
+        "location": "Marina",
+        "price_aed": "1,500,000",
+        "roi": "6.5%",
+        "description": "Amazing 1BR with full sea view. Walking distance to Metro.",
         "image_url": "https://images.pexels.com/photos/3787839/pexels-photo-3787839.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 3,
-        "name": "Ocean Heights",
-        "location": "Dubai Marina",
-        "price_aed": "3.1M AED",
-        "image_url": "https://images.pexels.com/photos/1438832/pexels-photo-1438832.jpeg?auto=compress&cs=tinysrgb&w=600"
-    },
-    {
-        "id": 4,
-        "name": "Pier 7 Exclusive",
-        "location": "Dubai Marina",
-        "price_aed": "2.2M AED",
-        "image_url": "https://images.pexels.com/photos/323705/pexels-photo-323705.jpeg?auto=compress&cs=tinysrgb&w=600"
-    },
-    {
-        "id": 5,
-        "name": "Burj Khalifa View",
-        "location": "Downtown Dubai",
-        "price_aed": "4.5M AED",
+        "id": 2,
+        "name": "Downtown Burj Suite",
+        "location": "Downtown",
+        "price_aed": "2,800,000",
+        "roi": "7.2%",
+        "description": "Opposite Burj Khalifa. High floor, fully furnished.",
         "image_url": "https://images.pexels.com/photos/162031/dubai-tower-arab-khalifa-162031.jpeg?auto=compress&cs=tinysrgb&w=600"
     },
     {
-        "id": 6,
-        "name": "Downtown Luxury",
-        "location": "Downtown Dubai",
-        "price_aed": "3.8M AED",
-        "image_url": "https://images.pexels.com/photos/442579/pexels-photo-442579.jpeg?auto=compress&cs=tinysrgb&w=600"
-    },
-    {
-        "id": 7,
-        "name": "Boulevard Point",
-        "location": "Downtown Dubai",
-        "price_aed": "2.9M AED",
-        "image_url": "https://images.pexels.com/photos/3769312/pexels-photo-3769312.jpeg?auto=compress&cs=tinysrgb&w=600"
-    },
-    {
-        "id": 8,
-        "name": "Opera District",
-        "location": "Downtown Dubai",
-        "price_aed": "5.1M AED",
-        "image_url": "https://images.pexels.com/photos/2044434/pexels-photo-2044434.jpeg?auto=compress&cs=tinysrgb&w=600"
+        "id": 3,
+        "name": "Meydan Golf Villa",
+        "location": "Meydan",
+        "price_aed": "4,200,000",
+        "roi": "5.8%",
+        "description": "3BR Villa on the golf course. Handover soon.",
+        "image_url": "https://images.pexels.com/photos/325185/pexels-photo-325185.jpeg?auto=compress&cs=tinysrgb&w=600"
     }
 ]
